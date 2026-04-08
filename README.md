@@ -1,4 +1,4 @@
-# mobile_model_eval
+# mobile-model-eval
 
 Benchmark how well LLMs can operate real mobile interfaces using only native
 human-style interactions: screenshots, taps, swipes, long-presses, and
