@@ -1,0 +1,32 @@
+mobile_model_eval
+Copyright 2026 Trace Machina
+
+Licensing summary
+
+- Except where otherwise noted, this repository is licensed under the
+  Business Source License 1.1 in LICENSE.
+- The Apache-2.0 text previously used by this repository is preserved in
+  licenses/APACHE-2.0.txt.
+- The Android-derived source and script files listed below remain under
+  Apache License 2.0 to preserve the original Android code's required notices:
+  platforms/android/**
+  run.sh
+  index.ts
+  harness/**
+  scripts/export-widget-data.ts
+  scripts/start-android-emulator.sh
+  scripts/start-emulator.sh
+
+Modification notice for Apache-derived files
+
+- Trace Machina reorganized the original Android-only project into a
+  mobile project, moved the Android implementation under platforms/android,
+  and updated the shared harness to support Android and iOS.
+
+Trademark notice
+
+- Trace Machina, mobile_model_eval, and related names and logos are
+  trademarks or service marks of Trace Machina.
+- This repository intentionally uses `TM`-style trademark claims and does not
+  assert federal registration status for any mark unless Trace Machina later
+  updates this notice to say otherwise.
