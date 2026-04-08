@@ -1,0 +1,26 @@
+{
+  "name": "mobile_model_eval",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "workspaces": [
+    "platforms/android/bridge",
+    "platforms/ios/bridge"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p platforms/android/bridge/tsconfig.json --noEmit && tsc -p platforms/ios/bridge/tsconfig.json --noEmit",
+    "build": "bun run typecheck"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^2.1.84",
+    "@google/gemini-cli": "^0.35.3",
+    "@openai/codex": "^0.116.0",
+    "claude-code": "^1.0.0",
+    "codex": "^0.2.3"
+  }
+}

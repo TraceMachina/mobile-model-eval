@@ -1,0 +1,261 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * Derived from the original Android model evaluation code and modified by Trace Machina.
+ * See /NOTICE and /licenses/APACHE-2.0.txt.
+ */
+import { join } from "node:path";
+import * as log from "./log.ts";
+import type { LlmProvider, ProviderConfig } from "./providers/types.ts";
+import type {
+  TestCase,
+  TestResult,
+  TestRunSummary,
+  CheckResult,
+  VerificationCheck,
+  SessionAdminContext,
+} from "./types.ts";
+import type { AdminClient } from "./admin_client.ts";
+import type { PlatformDefinition } from "../platforms/types.ts";
+
+const DEFAULT_TIMEOUT_MS = 120_000;
+
+/** Execute a single verification check and return the result. */
+async function runCheck(
+  check: VerificationCheck,
+  sessionAdminCtx: SessionAdminContext,
+): Promise<CheckResult> {
+  try {
+    const output =
+      typeof check.command === "string"
+        ? await sessionAdminCtx.shell(check.command)
+        : await check.command(sessionAdminCtx);
+    const normalizedOutput = output.trim();
+
+    if (typeof check.expected === "string") {
+      const pass = normalizedOutput === check.expected;
+      return {
+        name: check.name,
+        pass,
+        message: pass
+          ? `Got expected value "${check.expected}"`
+          : `Expected "${check.expected}", got "${normalizedOutput}"`,
+        actualOutput: normalizedOutput,
+      };
+    }
+
+    if (check.expected instanceof RegExp) {
+      const pass = check.expected.test(normalizedOutput);
+      return {
+        name: check.name,
+        pass,
+        message: pass
+          ? `Output matched ${check.expected}`
+          : `Output "${normalizedOutput}" did not match ${check.expected}`,
+        actualOutput: normalizedOutput,
+      };
+    }
+
+    const result = check.expected(normalizedOutput);
+    return {
+      name: check.name,
+      pass: result.pass,
+      message: result.message,
+      actualOutput: normalizedOutput,
+    };
+  } catch (err: any) {
+    return {
+      name: check.name,
+      pass: false,
+      message: `Check error: ${err.message}`,
+    };
+  }
+}
+
+export interface RunnerOptions {
+  /** URL of the MCP server (port 3000). Passed to the LLM provider. */
+  mcpServerUrl: string;
+  /** Admin client for session management + ADB commands. */
+  admin: AdminClient;
+  /** Model name for the JSON report. */
+  model: string;
+  /** Effort level for the JSON report. */
+  effort?: string;
+  /** Directory for result output (videos stored in videos/ subdir). Defaults to "results". */
+  resultsDir?: string;
+}
+
+/**
+ * Runs test cases sequentially against a given LLM provider.
+ * Each test gets its own device session via the admin API.
+ */
+export async function runTests(
+  tests: TestCase[],
+  provider: LlmProvider,
+  platform: PlatformDefinition,
+  { admin, mcpServerUrl, model, effort, resultsDir = "results" }: RunnerOptions,
+): Promise<TestRunSummary> {
+  const runStart = Date.now();
+  const results: TestResult[] = [];
+
+  for (const test of tests) {
+    const testStart = Date.now();
+    log.testHeader(test.name, test.id);
+
+    let error: string | undefined;
+    let prompt: string | undefined;
+    let rawOutput: string | undefined;
+    let tokenUsage: import("./providers/types.ts").TokenUsage | undefined;
+    let deviceSessionId: string | undefined;
+    let videoPath: string | undefined;
+    let recordingStartedAtMs: number | undefined;
+
+    try {
+      // 0. CREATE SESSION + RESTORE BASELINE
+      const session = await admin.initDeviceSession();
+      deviceSessionId = session.deviceSessionId;
+      const deviceLabel = session.deviceName
+        ? `${session.deviceName} (${session.deviceId})`
+        : session.deviceId;
+      log.harness(`Session: ${deviceSessionId} (${deviceLabel})`);
+
+      log.harness("Loading baseline device state...");
+      await platform.loadBaseline(admin, deviceSessionId);
+      log.harness("Baseline device state loaded.");
+
+      const sessionAdminCtx = platform.createSessionAdminContext(admin, deviceSessionId, session);
+
+      // 1. SETUP: test-specific
+      for (const step of test.setup) {
+        if (typeof step === "string") {
+          log.harness(`Setup: ${step}`);
+          await sessionAdminCtx.shell(step);
+        } else {
+          await step(sessionAdminCtx);
+        }
+      }
+
+      // 1.5. START RECORDING (after setup, before LLM execution)
+      try {
+        videoPath = join(
+          resultsDir,
+          "videos",
+          `${deviceSessionId}.${platform.recordingExtension}`,
+        );
+        const recordResult = await admin.startRecording(deviceSessionId, videoPath);
+        recordingStartedAtMs = recordResult.startedAtMs;
+        log.harness(`Recording started (startedAtMs=${recordingStartedAtMs})`);
+      } catch (err: any) {
+        log.harnessError(`Recording failed to start: ${err.message}`);
+        videoPath = undefined;
+        recordingStartedAtMs = undefined;
+      }
+
+      // 2. EXECUTE: let the LLM do its thing
+      const config: ProviderConfig = {
+        mcpServerUrl,
+        mcpServerName: platform.mcpServerName,
+        deviceSessionId,
+        platform: platform.id,
+        platformDisplayName: platform.displayName,
+        timeoutMs: test.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      };
+
+      try {
+        const result = await provider.execute(test.prompt, config);
+        error = result.error;
+        prompt = result.prompt;
+        rawOutput = result.rawOutput;
+        tokenUsage = result.tokenUsage;
+      } catch (err: any) {
+        error = err.message;
+        log.harnessError(`Execution error: ${err.message}`);
+      }
+
+      // 2.5. STOP RECORDING (after LLM execution, before verification)
+      if (videoPath && recordingStartedAtMs) {
+        try {
+          if (platform.beforeStopRecording) {
+            await platform.beforeStopRecording(sessionAdminCtx);
+          }
+          await admin.stopRecording(deviceSessionId);
+          log.harness("Recording stopped.");
+        } catch (err: any) {
+          log.harnessError(`Recording stop failed: ${err.message}`);
+        }
+      }
+
+      // 3. VERIFY: check device state + raw output
+      const checks: CheckResult[] = [];
+      for (const verification of test.verifications) {
+        const result = await runCheck(verification, sessionAdminCtx);
+        checks.push(result);
+        log.check(result.pass, `${result.name}: ${result.message}`);
+      }
+
+      if (test.rawOutputCheck && rawOutput) {
+        const result = test.rawOutputCheck(rawOutput);
+        const checkResult: CheckResult = {
+          name: "rawOutputCheck",
+          pass: result.pass,
+          message: result.message,
+        };
+        checks.push(checkResult);
+        log.check(checkResult.pass, `${checkResult.name}: ${checkResult.message}`);
+      }
+
+      const pass = !error && checks.every((c) => c.pass);
+      results.push({
+        platform: platform.id,
+        testId: test.id,
+        testName: test.name,
+        provider: provider.name,
+        pass,
+        checks,
+        durationMs: Date.now() - testStart,
+        error,
+        prompt,
+        tokenUsage,
+        rawOutput,
+        videoPath,
+        recordingStartedAtMs,
+      });
+
+      log.testResult(pass);
+    } catch (err: any) {
+      log.harnessError(`Test failed: ${err.message}`);
+      results.push({
+        platform: platform.id,
+        testId: test.id,
+        testName: test.name,
+        provider: provider.name,
+        pass: false,
+        checks: [],
+        durationMs: Date.now() - testStart,
+        error: err.message,
+      });
+    } finally {
+      // 4. CLEANUP: remove session (auto-stops recording if still active)
+      if (deviceSessionId) {
+        try {
+          await admin.removeDeviceSession(deviceSessionId);
+        } catch (err: any) {
+          log.harnessError(`Cleanup failed: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  return {
+    platform: platform.id,
+    provider: provider.name,
+    model,
+    effort,
+    totalTests: tests.length,
+    passed: results.filter((r) => r.pass).length,
+    failed: results.filter((r) => !r.pass).length,
+    results,
+    startedAt: new Date(runStart).toISOString(),
+    completedAt: new Date().toISOString(),
+    totalDurationMs: Date.now() - runStart,
+  };
+}
