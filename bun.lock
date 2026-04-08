@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "mobile_model_eval",
+      "name": "mobile-model-eval",
       "dependencies": {
         "@anthropic-ai/claude-code": "^2.1.84",
         "@google/gemini-cli": "^0.35.3",

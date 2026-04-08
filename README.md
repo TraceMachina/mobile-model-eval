@@ -14,7 +14,7 @@ platform implementations:
 ## Project Layout
 
 ```text
-mobile_model_eval/
+mobile-model-eval/
 ├── platforms/
 │   ├── android/
 │   │   ├── README.md

@@ -1,5 +1,5 @@
 {
-  description = "Development shell for mobile_model_eval";
+  description = "Development shell for mobile-model-eval";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

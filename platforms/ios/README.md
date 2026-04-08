@@ -1,6 +1,6 @@
-# mobile_model_eval for iOS
+# mobile-model-eval for iOS
 
-This is the iOS slice of `mobile_model_eval`.
+This is the iOS slice of `mobile-model-eval`.
 
 It mirrors the Android project shape where practical, but the implementation is
 necessarily different because iOS Simulator does not expose an `adb`-style

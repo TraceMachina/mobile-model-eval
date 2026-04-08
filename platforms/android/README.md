@@ -1,6 +1,6 @@
-# mobile_model_eval for Android
+# mobile-model-eval for Android
 
-This is the Android slice of `mobile_model_eval`.
+This is the Android slice of `mobile-model-eval`.
 
 It keeps the original Android architecture:
 

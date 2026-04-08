@@ -1,5 +1,5 @@
 {
-  "name": "mobile_model_eval",
+  "name": "mobile-model-eval",
   "module": "index.ts",
   "type": "module",
   "private": true,
